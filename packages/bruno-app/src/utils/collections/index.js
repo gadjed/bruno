@@ -1228,7 +1228,7 @@ export const getGlobalEnvironmentVariablesMasked = ({ globalEnvironments, active
 
   if (environment && Array.isArray(environment.variables)) {
     return environment.variables
-      .filter((variable) => variable.name && variable.value && variable.enabled && variable.secret)
+      .filter((variable) => variable.name && variable.enabled && variable.secret)
       .map((variable) => variable.name);
   }
 
@@ -1266,7 +1266,7 @@ export const getEnvironmentVariablesMasked = (collection) => {
 
   // Filter the environment variables to get only the masked (secret) ones
   return environment.variables
-    .filter((variable) => variable.name && variable.value && variable.enabled && variable.secret)
+    .filter((variable) => variable.name && variable.enabled && variable.secret)
     .map((variable) => variable.name);
 };
 
@@ -1742,16 +1742,21 @@ export const getInitialExampleName = (item) => {
 };
 
 /**
- * A name can exist as both a plain variable and a secret. The secret takes
- * precedence (matching interpolation), so the resolved value and the secret
- * flag stay in sync instead of coming from different entries.
+ * Resolves the last enabled variable matching the given name.
+ * Secret variables take precedence over plain variables, regardless of their
+ * position in the array.
+ *
  * @param {Array} variables - `environment.variables`
  * @param {string} variableName - Name of the variable to resolve
- * @returns {Object|undefined} The matching variable, preferring a secret entry over a plain one
+ * @returns {Object|undefined} The last matching enabled variable, preferring secrets
  */
 export const resolveEnabledVariable = (variables, variableName) => {
   const matches = (variables || []).filter((v) => v.name === variableName && v.enabled);
-  return matches.find((v) => v.secret) || matches[0];
+  const matchingSecrets = matches.filter((v) => v.secret);
+  if (matchingSecrets.length > 0) {
+    return matchingSecrets[matchingSecrets.length - 1];
+  }
+  return matches[matches.length - 1];
 };
 
 // Get the scope and raw value of a variable by checking all scopes in priority order
@@ -1977,7 +1982,7 @@ const SCOPE_CONFIG = [
   },
   {
     type: VARIABLE_ADD_SCOPES.COLLECTION,
-    label: 'Collection Variables',
+    label: 'Collection Variable',
     supportsSecret: false,
     isAvailable: ({ hasCollection }) => hasCollection,
     enabled: () => true
@@ -1991,7 +1996,7 @@ const SCOPE_CONFIG = [
   },
   {
     type: VARIABLE_ADD_SCOPES.FOLDER,
-    label: ({ parentFolder, isSelfFolder }) => (isSelfFolder ? 'Folder' : `Parent Folder(${parentFolder?.name || ''})`),
+    label: ({ parentFolder, isSelfFolder }) => (isSelfFolder ? 'Folder' : `Parent Folder (${parentFolder?.name || ''})`),
     supportsSecret: false,
     // Only the request/folder's direct containing folder is added. unless we're already in
     // that folder's own settings, in which case the folder itself is the target.
@@ -2014,7 +2019,7 @@ const SCOPE_CONFIG = [
  *   Folder Variable is only added when this is present.
  * @param {boolean} [options.isSelfFolder] - True when `parentFolder` is the folder currently being
  *   edited (tooltip opened from within that folder's own settings), rather than an actual parent.
- *   Only affects the Folder scope's label ("Folder" vs "Parent Folder(...)").
+ *   Only affects the Folder scope's label ("Folder" vs "Parent Folder (...)").
  * @param {boolean} [options.hasCollection] - when we are in Global Environment table, there is no collection context,
  * so we don't show collection/environment scopes
  * @returns {Array<{type: string, label: string, enabled: boolean, supportsSecret: boolean}>}
