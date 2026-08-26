@@ -8,7 +8,8 @@ import {
   IconSearch,
   IconPalette,
   IconBrandGithub,
-  IconRefresh
+  IconRefresh,
+  IconUpload
 } from '@tabler/icons';
 import Mousetrap from 'mousetrap';
 import { getKeyBindingsForActionAllOS } from 'providers/Hotkeys/keyMappings';
@@ -19,7 +20,7 @@ import Portal from 'components/Portal';
 import ThemeDropdown from './ThemeDropdown';
 import { openConsole } from 'providers/ReduxStore/slices/logs';
 import { addTab } from 'providers/ReduxStore/slices/tabs';
-import { checkGitAutoSync } from 'providers/ReduxStore/slices/app';
+import { checkGitAutoSync, pushGitAutoSync } from 'providers/ReduxStore/slices/app';
 import { useApp } from 'providers/App';
 import toast from 'react-hot-toast';
 import StyledWrapper from './StyledWrapper';
@@ -39,12 +40,15 @@ const StatusBar = () => {
   const gitAutoSyncEnabled = useSelector((state) => state.app.preferences?.gitAutoSync?.enabled !== false);
   const [cookiesOpen, setCookiesOpen] = useState(false);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
+  const [isPushing, setIsPushing] = useState(false);
   const { version } = useApp();
 
   const activeWorkspace = workspaces.find((w) => w.uid === activeWorkspaceUid);
 
   const errorCount = logs.filter((log) => log.type === 'error').length;
+  const uncommittedCount = Number(gitAutoSyncStatus?.uncommittedCount) || 0;
   const syncBusy = isCheckingUpdates
+    || isPushing
     || gitAutoSyncStatus?.state === 'checking'
     || gitAutoSyncStatus?.state === 'syncing';
 
@@ -90,9 +94,32 @@ const StatusBar = () => {
     }
   };
 
+  const handleGitPush = async () => {
+    if (syncBusy) {
+      return;
+    }
+    setIsPushing(true);
+    try {
+      const status = await dispatch(pushGitAutoSync());
+      if (status?.state === 'error') {
+        toast.error(status.message || 'Failed to push changes');
+      } else {
+        toast.success(status?.message || 'Pushed changes');
+      }
+    } catch (err) {
+      toast.error(err?.message || 'Failed to push changes');
+    } finally {
+      setIsPushing(false);
+    }
+  };
+
   const syncHint = gitAutoSyncStatus?.message
     ? `Git updates: ${gitAutoSyncStatus.message}`
     : 'Check git remotes for updates';
+
+  const pushHint = uncommittedCount > 0
+    ? `Push ${uncommittedCount} uncommitted file${uncommittedCount === 1 ? '' : 's'} to remote`
+    : 'Push local changes to remote';
 
   return (
     <StyledWrapper>
@@ -161,26 +188,56 @@ const StatusBar = () => {
         <div className="status-bar-section">
           <div className="flex items-center gap-3">
             {gitAutoSyncEnabled && (
-              <ToolHint text={syncHint} toolhintId="GitAutoSyncCheck" place="top" offset={10}>
-                <button
-                  className={`status-bar-button ${syncBusy ? 'is-busy' : ''} ${gitAutoSyncStatus?.state === 'error' ? 'has-errors' : ''}`}
-                  data-trigger="git-auto-sync-check"
-                  onClick={handleCheckGitUpdates}
-                  disabled={syncBusy}
-                  tabIndex={0}
-                  aria-label="Check for git updates"
-                >
-                  <div className="console-button-content">
-                    <IconRefresh
-                      size={16}
-                      strokeWidth={1.5}
-                      aria-hidden="true"
-                      className={syncBusy ? 'spin' : undefined}
-                    />
-                    <span className="console-label">Git Sync</span>
-                  </div>
-                </button>
-              </ToolHint>
+              <>
+                <ToolHint text={syncHint} toolhintId="GitAutoSyncCheck" place="top" offset={10}>
+                  <button
+                    className={`status-bar-button ${syncBusy ? 'is-busy' : ''} ${gitAutoSyncStatus?.state === 'error' ? 'has-errors' : ''}`}
+                    data-trigger="git-auto-sync-check"
+                    data-testid="git-auto-sync-check"
+                    onClick={handleCheckGitUpdates}
+                    disabled={syncBusy}
+                    tabIndex={0}
+                    aria-label="Check for git updates"
+                  >
+                    <div className="console-button-content">
+                      <IconRefresh
+                        size={16}
+                        strokeWidth={1.5}
+                        aria-hidden="true"
+                        className={isCheckingUpdates || gitAutoSyncStatus?.state === 'checking' ? 'spin' : undefined}
+                      />
+                      <span className="console-label">Git Sync</span>
+                    </div>
+                  </button>
+                </ToolHint>
+
+                <ToolHint text={pushHint} toolhintId="GitAutoSyncPush" place="top" offset={10}>
+                  <button
+                    className={`status-bar-button ${syncBusy ? 'is-busy' : ''} ${gitAutoSyncStatus?.state === 'error' ? 'has-errors' : ''}`}
+                    data-trigger="git-auto-sync-push"
+                    data-testid="git-auto-sync-push"
+                    onClick={handleGitPush}
+                    disabled={syncBusy}
+                    tabIndex={0}
+                    aria-label={`Git push (${uncommittedCount} uncommitted)`}
+                  >
+                    <div className="console-button-content">
+                      <IconUpload
+                        size={16}
+                        strokeWidth={1.5}
+                        aria-hidden="true"
+                      />
+                      <span className="console-label">Git Push</span>
+                      <span
+                        className={`uncommitted-count-inline ${uncommittedCount > 0 ? 'has-changes' : 'is-clean'}`}
+                        data-testid="git-uncommitted-count"
+                      >
+                        {uncommittedCount}
+                      </span>
+                    </div>
+                  </button>
+                </ToolHint>
+              </>
             )}
 
             <button

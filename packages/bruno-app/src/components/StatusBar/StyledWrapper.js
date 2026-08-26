@@ -76,6 +76,26 @@ const StyledWrapper = styled.div`
     border-radius: 4px;
   }
 
+  .uncommitted-count-inline {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 4px;
+    min-width: 1.1rem;
+    text-align: center;
+    line-height: 1.2;
+
+    &.is-clean {
+      color: ${(props) => props.theme.colors.text.green};
+      background: ${(props) => props.theme.colors.text.green}20;
+    }
+
+    &.has-changes {
+      color: ${(props) => props.theme.colors.text.danger};
+      background: ${(props) => props.theme.colors.bg.danger}20;
+    }
+  }
+
   .status-bar-divider {
     width: 1px;
     height: 16px;

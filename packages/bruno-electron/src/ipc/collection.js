@@ -29,7 +29,7 @@ const { parseLargeRequestWithRedaction } = require('../utils/parse');
 const { getWsClient } = require('../ipc/network/ws-event-handlers');
 const { hasSubDirectories } = require('../utils/filesystem');
 const { transformProxyConfig } = require('@usebruno/requests');
-const { notifyFileSaved } = require('../app/git-auto-sync');
+const { notifyFileSaved, notifyStructureChanged } = require('../app/git-auto-sync');
 
 const {
   DEFAULT_GITIGNORE,
@@ -488,6 +488,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
         collectionPathname,
         newName
       });
+      notifyStructureChanged(collectionPathname);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -734,6 +735,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
 
       const content = await stringifyByType(parsedData, scopeType, collectionRoot, format);
       await writeFile(pathname, content);
+      notifyFileSaved(pathname);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -776,6 +778,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
       const content = await stringifyEnvironment(environment, { format });
 
       await writeFile(envFilePath, content);
+      notifyFileSaved(envFilePath);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -836,6 +839,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
       fs.renameSync(envFilePath, newEnvFilePath);
 
       environmentSecretsStore.renameEnvironment(collectionPathname, environmentName, newName);
+      notifyStructureChanged(newEnvFilePath);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -853,6 +857,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
       fs.unlinkSync(envFilePath);
 
       environmentSecretsStore.deleteEnvironment(collectionPathname, environmentName);
+      notifyStructureChanged(envFilePath);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -1075,6 +1080,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
 
         const folderFileContent = await stringifyFolder(folderFileJsonContent, { format });
         await writeFile(folderFilePath, folderFileContent);
+        notifyFileSaved(folderFilePath);
 
         return;
       }
@@ -1089,6 +1095,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
       jsonData.name = newName;
       const content = stringifyRequest(jsonData, { format });
       await writeFile(itemPath, content);
+      notifyFileSaved(itemPath);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -1156,6 +1163,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
           await fs.renameSync(oldPath, newPath);
         }
 
+        notifyStructureChanged(newPath);
         return newPath;
       }
 
@@ -1177,6 +1185,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
       await fs.promises.unlink(oldPath);
       await writeFile(newPath, content);
 
+      notifyStructureChanged(newPath);
       return newPath;
     } catch (error) {
       // in case the rename file operations fails, and we see that the temp dir exists
@@ -1208,6 +1217,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
         const folderFilePath = path.join(pathname, `folder.${format}`);
         const content = await stringifyFolder(folderData, { format });
         await writeFile(folderFilePath, content);
+        notifyStructureChanged(pathname);
       } else {
         return Promise.reject(new Error('The directory already exists'));
       }
@@ -1233,6 +1243,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
         }
 
         fs.rmSync(pathname, { recursive: true, force: true });
+        notifyStructureChanged(pathname);
       } else if (['http-request', 'graphql-request', 'grpc-request', 'ws-request'].includes(type)) {
         if (!fs.existsSync(pathname)) {
           return Promise.reject(new Error('The file does not exist'));
@@ -1241,6 +1252,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
         deleteRequestUid(pathname);
 
         fs.unlinkSync(pathname);
+        notifyStructureChanged(pathname);
       } else if (type === 'app') {
         // Standalone app items are single files with no per-line uid mapping.
         if (!fs.existsSync(pathname)) {
@@ -1248,6 +1260,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
         }
 
         fs.unlinkSync(pathname);
+        notifyStructureChanged(pathname);
       } else {
         return Promise.reject(new Error(`Unsupported item type for delete: ${type}`));
       }
@@ -1601,6 +1614,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
 
       // create folder and files based on another folder
       await parseCollectionItems(itemFolder.items, collectionPath);
+      notifyStructureChanged(collectionPath);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -1637,11 +1651,13 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
           }
           const content = await stringifyFolder(folderJsonData, { format });
           await writeFile(folderRootPath, content);
+          notifyFileSaved(folderRootPath);
         } else if (REQUEST_TYPES.includes(item?.type)) {
           if (fs.existsSync(item.pathname)) {
             const itemToSave = transformRequestToSaveToFilesystem(item);
             const content = await stringifyRequestViaWorker(itemToSave, { format });
             await writeFile(item.pathname, content);
+            notifyFileSaved(item.pathname);
           }
         } else if (item?.type === 'app') {
           if (fs.existsSync(item.pathname)) {
@@ -1653,6 +1669,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
             appJson.seq = item.seq;
             const newContent = stringifyRequest(appJson, { format });
             await writeFile(item.pathname, newContent);
+            notifyFileSaved(item.pathname);
           }
         }
       }
@@ -1675,6 +1692,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
 
       fs.unlinkSync(itemPath);
       safeWriteFileSync(newItemPath, itemContent);
+      notifyStructureChanged(newItemPath);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -1695,6 +1713,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
         pathnamesAfter?.forEach((_, index) => {
           moveRequestUid(pathnamesBefore[index], pathnamesAfter[index]);
         });
+        notifyStructureChanged(targetDirname);
       }
     } catch (error) {
       return Promise.reject(error);
@@ -1732,6 +1751,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
 
       moveRequestUid(sourcePathname, targetPathname);
 
+      notifyStructureChanged(targetPathname);
       return { newPathname: targetPathname };
     } catch (error) {
       return Promise.reject(error);
@@ -1762,6 +1782,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
       }
 
       fs.renameSync(folderPath, newFolderPath);
+      notifyStructureChanged(newFolderPath);
     } catch (error) {
       return Promise.reject(error);
     }

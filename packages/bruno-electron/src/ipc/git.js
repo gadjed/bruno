@@ -4,6 +4,8 @@ const { createDirectory, removeDirectory } = require('../utils/filesystem');
 const {
   initGitAutoSync,
   checkAndPullAll,
+  pushAllChanges,
+  refreshUncommittedCount,
   getStatus
 } = require('../app/git-auto-sync');
 
@@ -29,8 +31,16 @@ const registerGitIpc = (mainWindow) => {
     return checkAndPullAll({ reason: 'manual' });
   });
 
+  ipcMain.handle('renderer:git-auto-sync-push', async () => {
+    return pushAllChanges();
+  });
+
   ipcMain.handle('renderer:git-auto-sync-get-status', async () => {
     return getStatus();
+  });
+
+  ipcMain.handle('renderer:git-auto-sync-refresh-uncommitted', async () => {
+    return refreshUncommittedCount();
   });
 };
 

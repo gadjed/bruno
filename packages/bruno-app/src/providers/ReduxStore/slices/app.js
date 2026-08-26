@@ -115,7 +115,8 @@ const initialState = {
     state: 'idle',
     message: '',
     lastCheckedAt: null,
-    lastSyncedAt: null
+    lastSyncedAt: null,
+    uncommittedCount: 0
   },
   clipboard: {
     hasCopiedItems: false // Whether clipboard has Bruno data (for UI)
@@ -486,6 +487,26 @@ export const checkGitAutoSync = () => (dispatch) => {
       const status = {
         state: 'error',
         message: err?.message || 'Failed to check for updates',
+        lastCheckedAt: Date.now()
+      };
+      dispatch(setGitAutoSyncStatus(status));
+      throw err;
+    });
+};
+
+export const pushGitAutoSync = () => (dispatch) => {
+  const { ipcRenderer } = window;
+  dispatch(setGitAutoSyncStatus({ state: 'syncing', message: 'Pushing local changes…' }));
+  return ipcRenderer
+    .invoke('renderer:git-auto-sync-push')
+    .then((status) => {
+      dispatch(setGitAutoSyncStatus(status));
+      return status;
+    })
+    .catch((err) => {
+      const status = {
+        state: 'error',
+        message: err?.message || 'Failed to push changes',
         lastCheckedAt: Date.now()
       };
       dispatch(setGitAutoSyncStatus(status));

@@ -12,11 +12,16 @@ const { getPreferences } = require('../store/preferences');
 
 const DEFAULT_COMMIT_DEBOUNCE_MS = 5000;
 const DEFAULT_PULL_INTERVAL_MS = 30 * 60 * 1000;
+const UNCOMMITTED_REFRESH_DEBOUNCE_MS = 1500;
+/** Sentinel queued when a structural change (rename/move/delete) touches the tree. */
+const STAGE_ALL_SENTINEL = '__bruno_stage_all__';
 
 /** @type {Electron.BrowserWindow | null} */
 let mainWindow = null;
 /** @type {NodeJS.Timeout | null} */
 let pullIntervalId = null;
+/** @type {NodeJS.Timeout | null} */
+let uncommittedRefreshTimer = null;
 /** @type {Map<string, { files: Set<string>, timer: NodeJS.Timeout | null, running: boolean }>} */
 const queues = new Map();
 
@@ -24,7 +29,8 @@ let status = {
   state: 'idle', // idle | checking | syncing | success | error
   message: '',
   lastCheckedAt: null,
-  lastSyncedAt: null
+  lastSyncedAt: null,
+  uncommittedCount: 0
 };
 
 const isEnabled = () => {
@@ -78,12 +84,69 @@ const resolveRemoteAndBranch = async (gitRootPath) => {
   return { remote, branch };
 };
 
+const countUncommittedFiles = (repoStatus) => {
+  if (!repoStatus) {
+    return 0;
+  }
+  if (Array.isArray(repoStatus.files)) {
+    return repoStatus.files.length;
+  }
+  // Fallback for unexpected status shapes
+  const created = repoStatus.created?.length || 0;
+  const deleted = repoStatus.deleted?.length || 0;
+  const modified = repoStatus.modified?.length || 0;
+  const renamed = repoStatus.renamed?.length || 0;
+  const notAdded = repoStatus.not_added?.length || 0;
+  const conflicted = repoStatus.conflicted?.length || 0;
+  return created + deleted + modified + renamed + notAdded + conflicted;
+};
+
+const refreshUncommittedCount = async () => {
+  if (!isEnabled()) {
+    return emitStatus({ uncommittedCount: 0 });
+  }
+
+  const roots = getOpenGitRoots();
+  if (!roots.length) {
+    return emitStatus({ uncommittedCount: 0 });
+  }
+
+  let total = 0;
+  for (const gitRoot of roots) {
+    try {
+      const git = getSimpleGitInstanceForPath(gitRoot);
+      const repoStatus = await git.status();
+      total += countUncommittedFiles(repoStatus);
+    } catch (err) {
+      console.warn('[git-auto-sync] failed to read uncommitted status for', gitRoot, err?.message || err);
+    }
+  }
+
+  return emitStatus({ uncommittedCount: total });
+};
+
+const scheduleUncommittedRefresh = () => {
+  if (uncommittedRefreshTimer) {
+    clearTimeout(uncommittedRefreshTimer);
+  }
+  uncommittedRefreshTimer = setTimeout(() => {
+    uncommittedRefreshTimer = null;
+    refreshUncommittedCount().catch((err) => {
+      console.warn('[git-auto-sync] uncommitted refresh failed:', err?.message || err);
+    });
+  }, UNCOMMITTED_REFRESH_DEBOUNCE_MS);
+};
+
 const buildCommitMessage = (files) => {
-  const relativeHint = files
+  const realFiles = files.filter((filePath) => filePath !== STAGE_ALL_SENTINEL);
+  if (!realFiles.length) {
+    return 'bruno: auto-save collection structure';
+  }
+  const relativeHint = realFiles
     .slice(0, 3)
     .map((filePath) => path.basename(filePath))
     .join(', ');
-  const more = files.length > 3 ? ` (+${files.length - 3})` : '';
+  const more = realFiles.length > 3 ? ` (+${realFiles.length - 3})` : '';
   return `bruno: auto-save ${relativeHint}${more}`;
 };
 
@@ -101,9 +164,14 @@ const syncLastWriteWins = async (gitRootPath, files) => {
   }
   const { remote, branch } = remoteInfo;
 
-  const filesToStage = files.length ? files : [];
+  const stageAll = files.includes(STAGE_ALL_SENTINEL);
+  const filesToStage = files.filter((filePath) => filePath !== STAGE_ALL_SENTINEL);
 
-  if (filesToStage.length) {
+  if (stageAll) {
+    // Structural edits (rename/move/delete) show up as deletes + untracked paths.
+    // `git add -A` stages the full working tree so renames aren't left behind.
+    await git.add(['-A']);
+  } else if (filesToStage.length) {
     await stageChanges(gitRootPath, filesToStage);
   }
 
@@ -111,13 +179,18 @@ const syncLastWriteWins = async (gitRootPath, files) => {
   const hasStaged = (statusAfterAdd.staged || []).length > 0
     || (statusAfterAdd.files || []).some((f) => f.index && f.index !== ' ' && f.index !== '?');
 
-  if (hasStaged || filesToStage.length) {
+  if (hasStaged || filesToStage.length || stageAll) {
     try {
-      // Re-stage queued files in case status race dropped them
-      if (filesToStage.length) {
+      // Re-stage in case a status race dropped entries
+      if (stageAll) {
+        await git.add(['-A']);
+      } else if (filesToStage.length) {
         await stageChanges(gitRootPath, filesToStage);
       }
-      await commitChanges(gitRootPath, buildCommitMessage(filesToStage.length ? filesToStage : ['collection']));
+      await commitChanges(
+        gitRootPath,
+        buildCommitMessage(filesToStage.length || stageAll ? files : ['collection'])
+      );
     } catch (err) {
       // simple-git throws when there is nothing to commit after race
       if (!/nothing to commit/i.test(err?.message || '')) {
@@ -209,6 +282,16 @@ const getOpenGitRoots = () => {
   return [...roots];
 };
 
+const enqueueSync = (gitRootPath, pathnameOrSentinel) => {
+  const normalizedRoot = path.normalize(gitRootPath);
+  const queue = getQueue(normalizedRoot);
+  queue.files.add(pathnameOrSentinel);
+  if (queue.timer) {
+    clearTimeout(queue.timer);
+  }
+  queue.timer = setTimeout(() => flushQueue(normalizedRoot), getCommitDebounceMs());
+};
+
 const flushQueue = async (gitRootPath) => {
   const queue = getQueue(gitRootPath);
   if (queue.running) {
@@ -259,6 +342,7 @@ const flushQueue = async (gitRootPath) => {
     });
   } finally {
     queue.running = false;
+    scheduleUncommittedRefresh();
     if (queue.files.size > 0) {
       queue.timer = setTimeout(() => flushQueue(gitRootPath), getCommitDebounceMs());
     }
@@ -279,14 +363,32 @@ const notifyFileSaved = (pathname) => {
       return;
     }
 
-    const queue = getQueue(path.normalize(gitRoot));
-    queue.files.add(pathname);
-    if (queue.timer) {
-      clearTimeout(queue.timer);
-    }
-    queue.timer = setTimeout(() => flushQueue(path.normalize(gitRoot)), getCommitDebounceMs());
+    enqueueSync(gitRoot, pathname);
+    scheduleUncommittedRefresh();
   } catch (err) {
     console.warn('[git-auto-sync] notifyFileSaved failed:', err?.message || err);
+  }
+};
+
+/**
+ * Called after structural tree changes (create/rename/move/delete folder or item)
+ * where the change is not a simple single-file write — git needs `add -A`.
+ */
+const notifyStructureChanged = (pathname) => {
+  if (!pathname || !isEnabled()) {
+    return;
+  }
+
+  try {
+    const gitRoot = getCollectionGitRootPath(pathname);
+    if (!gitRoot) {
+      return;
+    }
+
+    enqueueSync(gitRoot, STAGE_ALL_SENTINEL);
+    scheduleUncommittedRefresh();
+  } catch (err) {
+    console.warn('[git-auto-sync] notifyStructureChanged failed:', err?.message || err);
   }
 };
 
@@ -295,7 +397,8 @@ const checkAndPullAll = async ({ reason = 'manual' } = {}) => {
     return emitStatus({
       state: 'idle',
       message: 'Git auto-sync is disabled',
-      lastCheckedAt: Date.now()
+      lastCheckedAt: Date.now(),
+      uncommittedCount: 0
     });
   }
 
@@ -304,7 +407,8 @@ const checkAndPullAll = async ({ reason = 'manual' } = {}) => {
     return emitStatus({
       state: 'idle',
       message: 'No git-backed collections open',
-      lastCheckedAt: Date.now()
+      lastCheckedAt: Date.now(),
+      uncommittedCount: 0
     });
   }
 
@@ -347,11 +451,94 @@ const checkAndPullAll = async ({ reason = 'manual' } = {}) => {
     message = 'Remote checked — local edits kept';
   }
 
+  await refreshUncommittedCount();
+
   return emitStatus({
     state,
     message,
     lastCheckedAt: Date.now(),
     lastSyncedAt: updatedCount ? Date.now() : status.lastSyncedAt
+  });
+};
+
+/**
+ * Manual push: commit any remaining local changes with last-write-wins, then force-push.
+ */
+const pushAllChanges = async () => {
+  if (!isEnabled()) {
+    return emitStatus({
+      state: 'idle',
+      message: 'Git auto-sync is disabled',
+      lastCheckedAt: Date.now()
+    });
+  }
+
+  const roots = getOpenGitRoots();
+  if (!roots.length) {
+    return emitStatus({
+      state: 'idle',
+      message: 'No git-backed collections open',
+      lastCheckedAt: Date.now(),
+      uncommittedCount: 0
+    });
+  }
+
+  emitStatus({
+    state: 'syncing',
+    message: 'Pushing local changes…',
+    lastCheckedAt: Date.now()
+  });
+
+  const results = [];
+  for (const gitRoot of roots) {
+    const queue = getQueue(gitRoot);
+    if (queue.timer) {
+      clearTimeout(queue.timer);
+      queue.timer = null;
+    }
+    // Fold any pending file saves into this push so we don't race the debounce flush
+    const pending = [...queue.files];
+    queue.files.clear();
+    const files = pending.length ? pending : [STAGE_ALL_SENTINEL];
+    if (!pending.includes(STAGE_ALL_SENTINEL) && pending.length) {
+      // Also pick up structural leftovers (renames/deletes) not in the file queue
+      files.push(STAGE_ALL_SENTINEL);
+    }
+
+    queue.running = true;
+    try {
+      const result = await syncLastWriteWins(gitRoot, files);
+      results.push({ gitRoot, ...result });
+    } catch (err) {
+      console.error('[git-auto-sync] push failed for', gitRoot, err);
+      results.push({ gitRoot, skipped: false, error: err?.message || String(err) });
+    } finally {
+      queue.running = false;
+    }
+  }
+
+  const pushedCount = results.filter((r) => !r.skipped && !r.error).length;
+  const skippedCount = results.filter((r) => r.skipped).length;
+  const errorCount = results.filter((r) => r.error).length;
+
+  let message = 'Nothing to push';
+  let state = 'success';
+  if (errorCount) {
+    state = 'error';
+    message = `Push failed for ${errorCount} repo(s)`;
+  } else if (pushedCount) {
+    message = `Pushed ${pushedCount} repo(s)`;
+  } else if (skippedCount) {
+    message = results.find((r) => r.reason)?.reason || 'Skipped push';
+  }
+
+  await refreshUncommittedCount();
+
+  return emitStatus({
+    state,
+    message,
+    lastCheckedAt: Date.now(),
+    lastSyncedAt: pushedCount ? Date.now() : status.lastSyncedAt
   });
 };
 
@@ -382,12 +569,22 @@ const initGitAutoSync = (win) => {
       console.error('[git-auto-sync] startup pull failed:', err);
     });
   }, 4000);
+
+  // Refresh the uncommitted badge once watchers have had time to register
+  setTimeout(() => {
+    refreshUncommittedCount().catch((err) => {
+      console.warn('[git-auto-sync] startup uncommitted refresh failed:', err?.message || err);
+    });
+  }, 6000);
 };
 
 module.exports = {
   initGitAutoSync,
   notifyFileSaved,
+  notifyStructureChanged,
   checkAndPullAll,
+  pushAllChanges,
+  refreshUncommittedCount,
   getStatus,
   startBackgroundPull,
   stopBackgroundPull
