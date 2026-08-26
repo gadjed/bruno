@@ -69,6 +69,11 @@ const initialState = {
       enabled: false,
       interval: 1000
     },
+    gitAutoSync: {
+      enabled: true,
+      commitDebounceMs: 5000,
+      pullIntervalMs: 1800000
+    },
     cache: {
       sslSession: {
         enabled: false
@@ -106,6 +111,12 @@ const initialState = {
   taskQueue: [],
   gitOperationProgress: {},
   gitVersion: null,
+  gitAutoSyncStatus: {
+    state: 'idle',
+    message: '',
+    lastCheckedAt: null,
+    lastSyncedAt: null
+  },
   clipboard: {
     hasCopiedItems: false // Whether clipboard has Bruno data (for UI)
   },
@@ -266,6 +277,12 @@ export const appSlice = createSlice({
     setGitVersion: (state, action) => {
       state.gitVersion = action.payload;
     },
+    setGitAutoSyncStatus: (state, action) => {
+      state.gitAutoSyncStatus = {
+        ...state.gitAutoSyncStatus,
+        ...action.payload
+      };
+    },
     setClipboard: (state, action) => {
       // Update clipboard UI state
       state.clipboard.hasCopiedItems = action.payload.hasCopiedItems;
@@ -332,6 +349,7 @@ export const {
   updateGitOperationProgress,
   removeGitOperationProgress,
   setGitVersion,
+  setGitAutoSyncStatus,
   setClipboard,
   setEnvVarSearchQuery,
   setEnvVarSearchExpanded,
@@ -453,6 +471,26 @@ export const completeQuitFlow = () => (dispatch, getState) => {
   // Wipe all `persisted::*` keys from localStorage before quitting
   clearPersistedScope();
   return ipcRenderer.invoke('main:complete-quit-flow');
+};
+
+export const checkGitAutoSync = () => (dispatch) => {
+  const { ipcRenderer } = window;
+  dispatch(setGitAutoSyncStatus({ state: 'checking', message: 'Checking for updates…' }));
+  return ipcRenderer
+    .invoke('renderer:git-auto-sync-check')
+    .then((status) => {
+      dispatch(setGitAutoSyncStatus(status));
+      return status;
+    })
+    .catch((err) => {
+      const status = {
+        state: 'error',
+        message: err?.message || 'Failed to check for updates',
+        lastCheckedAt: Date.now()
+      };
+      dispatch(setGitAutoSyncStatus(status));
+      throw err;
+    });
 };
 
 export const copyRequest = (item) => (dispatch, getState) => {

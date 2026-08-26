@@ -1,5 +1,12 @@
 require('dotenv').config({ path: process.env.DOTENV_PATH });
 
+const unsigned = process.env.CSC_IDENTITY_AUTO_DISCOVERY === 'false'
+  || process.env.BRUNO_UNSIGNED === '1'
+  || process.env.BRUNO_UNSIGNED === 'true';
+
+// Prefer current machine arch for local unsigned builds (M1/M2/M3 => arm64)
+const localArch = process.arch === 'arm64' ? 'arm64' : 'x64';
+
 const config = {
   appId: 'com.usebruno.app',
   productName: 'Bruno',
@@ -15,31 +22,38 @@ const config = {
     }
   ],
   files: ['**/*'],
-  afterSign: 'notarize.js',
+  afterSign: unsigned ? undefined : 'notarize.js',
   mac: {
     artifactName: '${name}_${version}_${arch}_${os}.${ext}',
     category: 'public.app-category.developer-tools',
-    target: [
-      {
-        target: 'pkg',
-        arch: ['x64', 'arm64']
-      },
-      {
-        target: 'dmg',
-        arch: ['x64', 'arm64']
-      },
-      {
-        target: 'zip',
-        arch: ['x64', 'arm64']
-      }
-    ],
+    target: unsigned
+      ? [
+          {
+            target: 'dmg',
+            arch: [localArch]
+          }
+        ]
+      : [
+          {
+            target: 'pkg',
+            arch: ['x64', 'arm64']
+          },
+          {
+            target: 'dmg',
+            arch: ['x64', 'arm64']
+          },
+          {
+            target: 'zip',
+            arch: ['x64', 'arm64']
+          }
+        ],
     icon: 'resources/icons/mac/icon.icns',
-    hardenedRuntime: true,
-    identity: 'Anoop MD (W7LPPWA48L)',
+    hardenedRuntime: !unsigned,
+    identity: unsigned ? null : 'Anoop MD (W7LPPWA48L)',
     entitlements: 'resources/entitlements.mac.plist',
     entitlementsInherit: 'resources/entitlements.mac.plist',
     notarize: false,
-    requirements: 'resources/app-requirements.txt',
+    requirements: unsigned ? undefined : 'resources/app-requirements.txt',
     protocols: [
       {
         name: 'Bruno',
@@ -52,20 +66,31 @@ const config = {
   linux: {
     artifactName: '${name}_${version}_${arch}_${os}.${ext}',
     icon: 'resources/icons/png',
-    target: [
-      {
-        target: 'AppImage',
-        arch: ['x64', 'arm64']
-      },
-      {
-        target: 'deb',
-        arch: ['x64', 'arm64']
-      },
-      {
-        target: 'rpm',
-        arch: ['x64', 'arm64']
-      }
-    ],
+    target: unsigned
+      ? [
+          {
+            target: 'AppImage',
+            arch: ['x64', 'arm64']
+          },
+          {
+            target: 'deb',
+            arch: ['x64', 'arm64']
+          }
+        ]
+      : [
+          {
+            target: 'AppImage',
+            arch: ['x64', 'arm64']
+          },
+          {
+            target: 'deb',
+            arch: ['x64', 'arm64']
+          },
+          {
+            target: 'rpm',
+            arch: ['x64', 'arm64']
+          }
+        ],
     protocols: [
       {
         name: 'Bruno',
@@ -95,12 +120,20 @@ const config = {
   win: {
     artifactName: '${name}_${version}_${arch}_win.${ext}',
     icon: 'resources/icons/win/icon.ico',
-    target: [
-      {
-        target: 'nsis',
-        arch: ['x64', 'arm64']
-      }
-    ],
+    // zip works cross-platform without Wine; nsis requires Windows/Wine
+    target: unsigned
+      ? [
+          {
+            target: 'zip',
+            arch: ['x64', 'arm64']
+          }
+        ]
+      : [
+          {
+            target: 'nsis',
+            arch: ['x64', 'arm64']
+          }
+        ],
     sign: null,
     publisherName: 'Bruno Software Inc'
   },

@@ -70,6 +70,11 @@ const defaultPreferences = {
     enabled: false,
     interval: 1000
   },
+  gitAutoSync: {
+    enabled: true,
+    commitDebounceMs: 5000,
+    pullIntervalMs: 1800000
+  },
   display: {
     zoomPercentage: 100
   },
@@ -191,6 +196,11 @@ const preferencesSchema = Yup.object().shape({
   autoSave: Yup.object({
     enabled: Yup.boolean(),
     interval: Yup.number().min(100)
+  }),
+  gitAutoSync: Yup.object({
+    enabled: Yup.boolean(),
+    commitDebounceMs: Yup.number().min(1000),
+    pullIntervalMs: Yup.number().min(60000)
   }),
   display: Yup.object({
     zoomPercentage: Yup.number().min(50).max(150)

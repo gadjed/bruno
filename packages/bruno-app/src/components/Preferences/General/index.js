@@ -57,6 +57,9 @@ const General = () => {
       }
       return true;
     }),
+    gitAutoSync: Yup.object({
+      enabled: Yup.boolean()
+    }),
     oauth2: Yup.object({
       useSystemBrowser: Yup.boolean()
     }),
@@ -79,6 +82,9 @@ const General = () => {
       autoSave: {
         enabled: get(preferences, 'autoSave.enabled', false),
         interval: get(preferences, 'autoSave.interval', 1000)
+      },
+      gitAutoSync: {
+        enabled: get(preferences, 'gitAutoSync.enabled', true)
       },
       oauth2: {
         useSystemBrowser: get(preferences, 'request.oauth2.useSystemBrowser', false)
@@ -120,6 +126,11 @@ const General = () => {
         autoSave: {
           enabled: newPreferences.autoSave.enabled,
           interval: newPreferences.autoSave.interval
+        },
+        gitAutoSync: {
+          enabled: newPreferences.gitAutoSync.enabled,
+          commitDebounceMs: get(preferences, 'gitAutoSync.commitDebounceMs', 5000),
+          pullIntervalMs: get(preferences, 'gitAutoSync.pullIntervalMs', 1800000)
         },
         general: {
           defaultLocation: newPreferences.defaultLocation
@@ -359,6 +370,22 @@ const General = () => {
         {formik.touched.autoSave?.interval && formik.errors.autoSave?.interval && (
           <div className="text-red-500">{formik.errors.autoSave.interval}</div>
         )}
+        <div className="flex items-center mt-6">
+          <input
+            id="gitAutoSyncEnabled"
+            type="checkbox"
+            name="gitAutoSync.enabled"
+            checked={formik.values.gitAutoSync.enabled}
+            onChange={formik.handleChange}
+            className="mousetrap mr-0"
+          />
+          <label className="block ml-2 select-none" htmlFor="gitAutoSyncEnabled">
+            Enable Git Auto Sync (pull → commit → force-push on save)
+          </label>
+        </div>
+        <div className="text-xs mt-1 opacity-70">
+          On save: pull then force-commit (last writer wins). Background pull on launch and every 30 minutes.
+        </div>
         <div className="flex flex-col mt-6">
           <label className="block select-none default-location-label" htmlFor="defaultLocation">
             Default Location

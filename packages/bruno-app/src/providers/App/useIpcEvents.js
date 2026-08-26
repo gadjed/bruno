@@ -3,6 +3,7 @@ import {
   updateCookies,
   updatePreferences,
   setGitVersion,
+  setGitAutoSyncStatus,
   setIsOpeningCollection
 } from 'providers/ReduxStore/slices/app';
 import {
@@ -382,6 +383,10 @@ const useIpcEvents = () => {
       dispatch(setGitVersion(val));
     });
 
+    const gitAutoSyncStatusListener = ipcRenderer.on('main:git-auto-sync-status', (val) => {
+      dispatch(setGitAutoSyncStatus(val || {}));
+    });
+
     // Mock server events
     const removeMockServerStatusListener = ipcRenderer.on('main:mock-server-status-changed', (val) => {
       dispatch(updateServerStatus(val));
@@ -464,6 +469,7 @@ const useIpcEvents = () => {
       removeRuntimeVariablesUpdateListener();
       removeSystemResourcesListener();
       gitVersionListener();
+      gitAutoSyncStatusListener();
       removeMockServerStatusListener();
       removeMockServerRequestLogListener();
       removeMockServerAddedListener();

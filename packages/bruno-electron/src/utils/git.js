@@ -1761,6 +1761,7 @@ const getGitGraph = async (gitRootPath, branchName, limit = 50) => {
 };
 
 module.exports = {
+  getSimpleGitInstanceForPath,
   getCollectionGitRootPath,
   getCollectionGitRepoUrl,
   stageChanges,

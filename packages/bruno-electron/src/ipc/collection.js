@@ -29,6 +29,7 @@ const { parseLargeRequestWithRedaction } = require('../utils/parse');
 const { getWsClient } = require('../ipc/network/ws-event-handlers');
 const { hasSubDirectories } = require('../utils/filesystem');
 const { transformProxyConfig } = require('@usebruno/requests');
+const { notifyFileSaved } = require('../app/git-auto-sync');
 
 const {
   DEFAULT_GITIGNORE,
@@ -509,6 +510,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
 
       const content = await stringifyFolder(folderRoot, { format });
       await writeFile(folderFilePath, content);
+      notifyFileSaved(folderFilePath);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -527,6 +529,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
       const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : null;
       if (content === existing) return; // skip write if content unchanged
       await writeFile(filePath, content);
+      notifyFileSaved(filePath);
     } catch (error) {
       console.error('Error in save-collection-root:', error);
       return Promise.reject(error);
@@ -555,6 +558,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
 
       const content = await stringifyRequestViaWorker(request, { format });
       await writeFile(pathname, content);
+      notifyFileSaved(pathname);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -574,6 +578,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
 
       const content = await stringifyRequestViaWorker(request, { format });
       await writeFile(pathname, content);
+      notifyFileSaved(pathname);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -623,6 +628,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
       }
 
       await writeFile(targetPathname, finalContent);
+      notifyFileSaved(targetPathname);
       return { newPathname: targetPathname };
     } catch (error) {
       return Promise.reject(error);
@@ -644,6 +650,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
 
         const content = await stringifyRequestViaWorker(request, { format: r.format });
         await writeFile(pathname, content);
+        notifyFileSaved(pathname);
       }
     } catch (error) {
       return Promise.reject(error);
@@ -659,6 +666,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
       }
 
       await writeFile(pathname, content);
+      notifyFileSaved(pathname);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -802,6 +810,7 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
         const existing = fs.readFileSync(envFilePath, 'utf8');
         if (content === existing) return; // skip write if content unchanged
         await writeFile(envFilePath, content);
+        notifyFileSaved(envFilePath);
       });
     } catch (error) {
       return Promise.reject(error);

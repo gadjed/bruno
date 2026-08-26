@@ -35,6 +35,24 @@ const StyledWrapper = styled.div`
     cursor: pointer;
     position: relative;
     outline: none;
+
+    &:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+
+    &.is-busy .spin {
+      animation: status-bar-spin 1s linear infinite;
+    }
+  }
+
+  @keyframes status-bar-spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .console-button-content {

@@ -1,7 +1,15 @@
 import React, { useState } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import find from 'lodash/find';
-import { IconSettings, IconCookie, IconTool, IconSearch, IconPalette, IconBrandGithub } from '@tabler/icons';
+import {
+  IconSettings,
+  IconCookie,
+  IconTool,
+  IconSearch,
+  IconPalette,
+  IconBrandGithub,
+  IconRefresh
+} from '@tabler/icons';
 import Mousetrap from 'mousetrap';
 import { getKeyBindingsForActionAllOS } from 'providers/Hotkeys/keyMappings';
 import ToolHint from 'components/ToolHint';
@@ -11,7 +19,9 @@ import Portal from 'components/Portal';
 import ThemeDropdown from './ThemeDropdown';
 import { openConsole } from 'providers/ReduxStore/slices/logs';
 import { addTab } from 'providers/ReduxStore/slices/tabs';
+import { checkGitAutoSync } from 'providers/ReduxStore/slices/app';
 import { useApp } from 'providers/App';
+import toast from 'react-hot-toast';
 import StyledWrapper from './StyledWrapper';
 
 const StatusBar = () => {
@@ -25,12 +35,18 @@ const StatusBar = () => {
   const activeTabUid = useSelector((state) => state.tabs.activeTabUid);
   const activeTab = find(tabs, (t) => t.uid === activeTabUid);
   const logs = useSelector((state) => state.logs.logs);
+  const gitAutoSyncStatus = useSelector((state) => state.app.gitAutoSyncStatus);
+  const gitAutoSyncEnabled = useSelector((state) => state.app.preferences?.gitAutoSync?.enabled !== false);
   const [cookiesOpen, setCookiesOpen] = useState(false);
+  const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const { version } = useApp();
 
   const activeWorkspace = workspaces.find((w) => w.uid === activeWorkspaceUid);
 
   const errorCount = logs.filter((log) => log.type === 'error').length;
+  const syncBusy = isCheckingUpdates
+    || gitAutoSyncStatus?.state === 'checking'
+    || gitAutoSyncStatus?.state === 'syncing';
 
   const handleConsoleClick = () => {
     dispatch(openConsole());
@@ -54,6 +70,29 @@ const StatusBar = () => {
       Mousetrap.trigger(binding);
     });
   };
+
+  const handleCheckGitUpdates = async () => {
+    if (syncBusy) {
+      return;
+    }
+    setIsCheckingUpdates(true);
+    try {
+      const status = await dispatch(checkGitAutoSync());
+      if (status?.state === 'error') {
+        toast.error(status.message || 'Failed to check for updates');
+      } else {
+        toast.success(status?.message || 'Checked for updates');
+      }
+    } catch (err) {
+      toast.error(err?.message || 'Failed to check for updates');
+    } finally {
+      setIsCheckingUpdates(false);
+    }
+  };
+
+  const syncHint = gitAutoSyncStatus?.message
+    ? `Git updates: ${gitAutoSyncStatus.message}`
+    : 'Check git remotes for updates';
 
   return (
     <StyledWrapper>
@@ -121,6 +160,29 @@ const StatusBar = () => {
 
         <div className="status-bar-section">
           <div className="flex items-center gap-3">
+            {gitAutoSyncEnabled && (
+              <ToolHint text={syncHint} toolhintId="GitAutoSyncCheck" place="top" offset={10}>
+                <button
+                  className={`status-bar-button ${syncBusy ? 'is-busy' : ''} ${gitAutoSyncStatus?.state === 'error' ? 'has-errors' : ''}`}
+                  data-trigger="git-auto-sync-check"
+                  onClick={handleCheckGitUpdates}
+                  disabled={syncBusy}
+                  tabIndex={0}
+                  aria-label="Check for git updates"
+                >
+                  <div className="console-button-content">
+                    <IconRefresh
+                      size={16}
+                      strokeWidth={1.5}
+                      aria-hidden="true"
+                      className={syncBusy ? 'spin' : undefined}
+                    />
+                    <span className="console-label">Git Sync</span>
+                  </div>
+                </button>
+              </ToolHint>
+            )}
+
             <button
               className="status-bar-button"
               data-trigger="search"

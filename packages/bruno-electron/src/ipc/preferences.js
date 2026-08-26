@@ -54,6 +54,17 @@ const registerPreferencesIpc = (mainWindow) => {
   ipcMain.handle('renderer:save-preferences', async (event, preferences) => {
     try {
       await savePreferences(preferences);
+      // Refresh git auto-sync interval if preferences changed
+      try {
+        const { startBackgroundPull, stopBackgroundPull } = require('../app/git-auto-sync');
+        if (preferences?.gitAutoSync?.enabled === false) {
+          stopBackgroundPull();
+        } else {
+          startBackgroundPull();
+        }
+      } catch (err) {
+        console.warn('Failed to refresh git auto-sync schedule:', err?.message || err);
+      }
     } catch (error) {
       return Promise.reject(error);
     }
