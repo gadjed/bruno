@@ -116,7 +116,10 @@ const initialState = {
     message: '',
     lastCheckedAt: null,
     lastSyncedAt: null,
-    uncommittedCount: 0
+    uncommittedCount: 0,
+    currentBranch: null,
+    branches: [],
+    mixed: false
   },
   clipboard: {
     hasCopiedItems: false // Whether clipboard has Bruno data (for UI)
@@ -507,6 +510,42 @@ export const pushGitAutoSync = () => (dispatch) => {
       const status = {
         state: 'error',
         message: err?.message || 'Failed to push changes',
+        lastCheckedAt: Date.now()
+      };
+      dispatch(setGitAutoSyncStatus(status));
+      throw err;
+    });
+};
+
+export const refreshGitBranches = () => (dispatch) => {
+  const { ipcRenderer } = window;
+  return ipcRenderer
+    .invoke('renderer:git-auto-sync-list-branches')
+    .then((status) => {
+      dispatch(setGitAutoSyncStatus(status));
+      return status;
+    })
+    .catch((err) => {
+      console.warn('Failed to list git branches:', err?.message || err);
+    });
+};
+
+export const switchGitBranch = (branchName) => (dispatch) => {
+  const { ipcRenderer } = window;
+  dispatch(setGitAutoSyncStatus({
+    state: 'syncing',
+    message: `Switching to ${branchName}…`
+  }));
+  return ipcRenderer
+    .invoke('renderer:git-auto-sync-checkout', branchName)
+    .then((status) => {
+      dispatch(setGitAutoSyncStatus(status));
+      return status;
+    })
+    .catch((err) => {
+      const status = {
+        state: 'error',
+        message: err?.message || 'Failed to switch branch',
         lastCheckedAt: Date.now()
       };
       dispatch(setGitAutoSyncStatus(status));

@@ -18,6 +18,7 @@ import Cookies from 'components/Cookies';
 import Notifications from 'components/Notifications';
 import Portal from 'components/Portal';
 import ThemeDropdown from './ThemeDropdown';
+import BranchSwitcher from './BranchSwitcher';
 import { openConsole } from 'providers/ReduxStore/slices/logs';
 import { addTab } from 'providers/ReduxStore/slices/tabs';
 import { checkGitAutoSync, pushGitAutoSync } from 'providers/ReduxStore/slices/app';
@@ -187,6 +188,7 @@ const StatusBar = () => {
 
         <div className="status-bar-section">
           <div className="flex items-center gap-3">
+            <BranchSwitcher />
             {gitAutoSyncEnabled && (
               <>
                 <ToolHint text={syncHint} toolhintId="GitAutoSyncCheck" place="top" offset={10}>

@@ -5,7 +5,8 @@ const {
   stageChanges,
   commitChanges,
   fetchChanges,
-  getCurrentGitBranch
+  getCurrentGitBranch,
+  getCollectionGitBranches
 } = require('../utils/git');
 const collectionWatcher = require('./collection-watcher');
 const { getPreferences } = require('../store/preferences');
@@ -22,6 +23,8 @@ let mainWindow = null;
 let pullIntervalId = null;
 /** @type {NodeJS.Timeout | null} */
 let uncommittedRefreshTimer = null;
+/** @type {NodeJS.Timeout | null} */
+let branchRefreshTimer = null;
 /** @type {Map<string, { files: Set<string>, timer: NodeJS.Timeout | null, running: boolean }>} */
 const queues = new Map();
 
@@ -30,7 +33,10 @@ let status = {
   message: '',
   lastCheckedAt: null,
   lastSyncedAt: null,
-  uncommittedCount: 0
+  uncommittedCount: 0,
+  currentBranch: null,
+  branches: [],
+  mixed: false
 };
 
 const isEnabled = () => {
@@ -70,6 +76,79 @@ const getQueue = (gitRootPath) => {
   return queues.get(gitRootPath);
 };
 
+const getOpenGitRoots = () => {
+  const watcherPaths = collectionWatcher.getAllWatcherPaths();
+  const roots = new Set();
+  for (const watchPath of watcherPaths) {
+    try {
+      const gitRoot = getCollectionGitRootPath(watchPath);
+      if (gitRoot) {
+        roots.add(path.normalize(gitRoot));
+      }
+    } catch (err) {
+      console.warn('[git-auto-sync] failed to resolve git root for', watchPath, err?.message);
+    }
+  }
+  return [...roots];
+};
+
+const EMPTY_BRANCH_STATE = { currentBranch: null, branches: [], mixed: false };
+
+const collectOpenRepoBranchState = async () => {
+  const roots = getOpenGitRoots();
+  if (!roots.length) {
+    return { ...EMPTY_BRANCH_STATE };
+  }
+
+  const branchSet = new Set();
+  const currents = [];
+
+  for (const gitRoot of roots) {
+    try {
+      const [localBranches, current] = await Promise.all([
+        getCollectionGitBranches(gitRoot),
+        getCurrentGitBranch(gitRoot)
+      ]);
+      (localBranches || []).forEach((name) => {
+        if (name && name !== 'HEAD') {
+          branchSet.add(name);
+        }
+      });
+      if (current && current !== 'HEAD') {
+        currents.push(current);
+      }
+    } catch (err) {
+      console.warn('[git-auto-sync] failed to read branches for', gitRoot, err?.message || err);
+    }
+  }
+
+  const uniqueCurrents = [...new Set(currents)];
+  const mixed = uniqueCurrents.length > 1;
+
+  return {
+    currentBranch: mixed ? null : (uniqueCurrents[0] || null),
+    branches: [...branchSet].sort((a, b) => a.localeCompare(b)),
+    mixed
+  };
+};
+
+const refreshBranchInfo = async () => {
+  const info = await collectOpenRepoBranchState();
+  return emitStatus(info);
+};
+
+const scheduleBranchRefresh = () => {
+  if (branchRefreshTimer) {
+    clearTimeout(branchRefreshTimer);
+  }
+  branchRefreshTimer = setTimeout(() => {
+    branchRefreshTimer = null;
+    refreshBranchInfo().catch((err) => {
+      console.warn('[git-auto-sync] branch refresh failed:', err?.message || err);
+    });
+  }, 250);
+};
+
 const resolveRemoteAndBranch = async (gitRootPath) => {
   const git = getSimpleGitInstanceForPath(gitRootPath);
   const remotes = await git.getRemotes(true);
@@ -103,12 +182,14 @@ const countUncommittedFiles = (repoStatus) => {
 
 const refreshUncommittedCount = async () => {
   if (!isEnabled()) {
-    return emitStatus({ uncommittedCount: 0 });
+    emitStatus({ uncommittedCount: 0 });
+    return refreshBranchInfo();
   }
 
   const roots = getOpenGitRoots();
   if (!roots.length) {
-    return emitStatus({ uncommittedCount: 0 });
+    emitStatus({ uncommittedCount: 0 });
+    return refreshBranchInfo();
   }
 
   let total = 0;
@@ -122,7 +203,8 @@ const refreshUncommittedCount = async () => {
     }
   }
 
-  return emitStatus({ uncommittedCount: total });
+  emitStatus({ uncommittedCount: total });
+  return refreshBranchInfo();
 };
 
 const scheduleUncommittedRefresh = () => {
@@ -266,20 +348,67 @@ const pullUpdatesForRoot = async (gitRootPath) => {
   }
 };
 
-const getOpenGitRoots = () => {
-  const watcherPaths = collectionWatcher.getAllWatcherPaths();
-  const roots = new Set();
-  for (const watchPath of watcherPaths) {
-    try {
-      const gitRoot = getCollectionGitRootPath(watchPath);
-      if (gitRoot) {
-        roots.add(path.normalize(gitRoot));
-      }
-    } catch (err) {
-      console.warn('[git-auto-sync] failed to resolve git root for', watchPath, err?.message);
+const checkoutOpenRepoBranch = async (branchName) => {
+  const trimmed = typeof branchName === 'string' ? branchName.trim() : '';
+  if (!trimmed) {
+    throw new Error('Branch name is required');
+  }
+
+  const roots = getOpenGitRoots();
+  if (!roots.length) {
+    throw new Error('No git-backed collections open');
+  }
+
+  for (const gitRoot of roots) {
+    const queue = getQueue(gitRoot);
+    if (queue.running || queue.files.size > 0) {
+      throw new Error('Git sync is in progress — wait for it to finish before switching branches');
     }
   }
-  return [...roots];
+
+  emitStatus({
+    state: 'syncing',
+    message: `Switching to ${trimmed}…`
+  });
+
+  const results = [];
+  for (const gitRoot of roots) {
+    try {
+      const current = await getCurrentGitBranch(gitRoot);
+      if (current === trimmed) {
+        results.push({ gitRoot, alreadyOnBranch: true });
+        continue;
+      }
+      const git = getSimpleGitInstanceForPath(gitRoot);
+      await git.checkout(trimmed);
+      results.push({ gitRoot, switched: true });
+    } catch (err) {
+      results.push({ gitRoot, error: err?.message || String(err) });
+    }
+  }
+
+  const switchedCount = results.filter((r) => r.switched).length;
+  const alreadyOnCount = results.filter((r) => r.alreadyOnBranch).length;
+  const errorCount = results.filter((r) => r.error).length;
+
+  await refreshUncommittedCount();
+
+  if (!switchedCount && !alreadyOnCount) {
+    const message = results.find((r) => r.error)?.error || `Failed to switch to ${trimmed}`;
+    emitStatus({ state: 'error', message });
+    throw new Error(message);
+  }
+
+  let state = 'success';
+  let message = alreadyOnCount && !switchedCount
+    ? `Already on ${trimmed}`
+    : `Switched to ${trimmed}`;
+  if (errorCount && switchedCount) {
+    state = 'error';
+    message = `Switched to ${trimmed} (${errorCount} repo(s) failed)`;
+  }
+
+  return emitStatus({ state, message });
 };
 
 const enqueueSync = (gitRootPath, pathnameOrSentinel) => {
@@ -570,7 +699,7 @@ const initGitAutoSync = (win) => {
     });
   }, 4000);
 
-  // Refresh the uncommitted badge once watchers have had time to register
+  // Refresh the uncommitted badge and branch list once watchers have had time to register
   setTimeout(() => {
     refreshUncommittedCount().catch((err) => {
       console.warn('[git-auto-sync] startup uncommitted refresh failed:', err?.message || err);
@@ -585,6 +714,9 @@ module.exports = {
   checkAndPullAll,
   pushAllChanges,
   refreshUncommittedCount,
+  refreshBranchInfo,
+  scheduleBranchRefresh,
+  checkoutOpenRepoBranch,
   getStatus,
   startBackgroundPull,
   stopBackgroundPull

@@ -6,6 +6,8 @@ const {
   checkAndPullAll,
   pushAllChanges,
   refreshUncommittedCount,
+  refreshBranchInfo,
+  checkoutOpenRepoBranch,
   getStatus
 } = require('../app/git-auto-sync');
 
@@ -41,6 +43,14 @@ const registerGitIpc = (mainWindow) => {
 
   ipcMain.handle('renderer:git-auto-sync-refresh-uncommitted', async () => {
     return refreshUncommittedCount();
+  });
+
+  ipcMain.handle('renderer:git-auto-sync-list-branches', async () => {
+    return refreshBranchInfo();
+  });
+
+  ipcMain.handle('renderer:git-auto-sync-checkout', async (event, branchName) => {
+    return checkoutOpenRepoBranch(branchName);
   });
 };
 

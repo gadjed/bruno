@@ -29,6 +29,14 @@ const { parseLargeRequestWithRedaction } = require('../utils/parse');
 const { transformBrunoConfigAfterRead } = require('../utils/transformBrunoConfig');
 const dotEnvWatcher = require('./dotenv-watcher');
 
+const notifyGitBranchWatchersChanged = () => {
+  try {
+    require('./git-auto-sync').scheduleBranchRefresh();
+  } catch (err) {
+    console.warn('[collection-watcher] git branch refresh skipped:', err?.message || err);
+  }
+};
+
 const MAX_FILE_SIZE = 2.5 * 1024 * 1024;
 
 const environmentSecretsStore = new EnvironmentSecretsStore();
@@ -902,6 +910,7 @@ class CollectionWatcher {
     this.watchers[watchPath] = watcher;
 
     dotEnvWatcher.addCollectionWatcher(win, watchPath, collectionUid);
+    notifyGitBranchWatchersChanged();
   }
 
   hasWatcher(watchPath) {
@@ -929,6 +938,8 @@ class CollectionWatcher {
     if (collectionUid) {
       this.cleanupLoadingState(collectionUid);
     }
+
+    notifyGitBranchWatchersChanged();
   }
 
   getWatcherByItemPath(itemPath) {
