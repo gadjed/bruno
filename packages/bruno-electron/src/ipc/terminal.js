@@ -1,8 +1,13 @@
 const { ipcMain } = require('electron');
-const pty = require('@lydell/node-pty');
 const os = require('os');
-const path = require('path');
 const isDev = require('electron-is-dev');
+
+let pty = null;
+try {
+  pty = require('@lydell/node-pty');
+} catch (error) {
+  console.error('Failed to load @lydell/node-pty. Integrated terminal will be unavailable.', error);
+}
 
 class TerminalManager {
   constructor() {
@@ -14,6 +19,11 @@ class TerminalManager {
     // Create a new terminal session
     ipcMain.handle('terminal:create', (event, options = {}) => {
       try {
+        if (!pty) {
+          console.error('Failed to create terminal session: native PTY module is unavailable');
+          return null;
+        }
+
         const sessionId = this.generateSessionId();
         const shell = this.getDefaultShell();
         // Use provided cwd or default to home directory

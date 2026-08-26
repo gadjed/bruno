@@ -1,5 +1,7 @@
 require('dotenv').config({ path: process.env.DOTENV_PATH });
 
+const { ensureNodePtyNativePackages, getNodePtyNativeFileSets } = require('./node-pty-native-packages');
+
 const unsigned = process.env.CSC_IDENTITY_AUTO_DISCOVERY === 'false'
   || process.env.BRUNO_UNSIGNED === '1'
   || process.env.BRUNO_UNSIGNED === 'true';
@@ -21,7 +23,22 @@ const config = {
       to: 'data/sample-collection.json'
     }
   ],
-  files: ['**/*'],
+  // @lydell/node-pty loads a sibling optional package (`@lydell/node-pty-<os>-<arch>`).
+  // electron-builder's dependency walker skips those optional binaries, so copy them
+  // in explicitly and unpack .node files out of asar so process.dlopen can load them.
+  beforeBuild: async (context) => {
+    ensureNodePtyNativePackages(undefined, {
+      platforms: [context.platform.nodeName]
+    });
+  },
+  files: [
+    '**/*',
+    ...getNodePtyNativeFileSets()
+  ],
+  asarUnpack: [
+    '**/*.node',
+    '**/node_modules/@lydell/node-pty*/**'
+  ],
   afterSign: unsigned ? undefined : 'notarize.js',
   mac: {
     artifactName: '${name}_${version}_${arch}_${os}.${ext}',

@@ -66,22 +66,17 @@ const glob = function (startPath, pattern) {
 };
 
 function forceInstallPlatformDeps() {
-  // Note: make sure to hard pin deps and only add deps that have been checked
-  // for sec vuln already since the following will be force installed.
-  const deps = {
-    darwin: ['@lydell/node-pty-darwin-arm64@1.1.0', '@lydell/node-pty-darwin-x64@1.1.0'],
-    win32: ['@lydell/node-pty-win32-arm64@1.1.0', '@lydell/node-pty-win32-x64@1.1.0'],
-    linux: ['@lydell/node-pty-linux-arm64@1.1.0', '@lydell/node-pty-linux-x64@1.1.0']
-  };
-
-  // Ignore if no deps need to be installed
-  if (!deps[process.platform] || (Array.isArray(deps[process.platform]) && deps[process.platform].length === 0)) return;
-
-  const toInstall = deps[process.platform];
-  execCommand(
-    `npm i --legacy-peer-deps --no-save --force ${toInstall.join(' ')}`,
-    'Installing platform specific dependencies'
-  );
+  // Host-platform binaries for local `npm run dev`. Cross-compiled targets
+  // (e.g. Linux AppImage on macOS) are installed in electron-builder beforeBuild.
+  try {
+    console.log(`\n${icons.working} Installing platform specific dependencies...`);
+    const { ensureNodePtyNativePackages } = require('../packages/bruno-electron/node-pty-native-packages');
+    ensureNodePtyNativePackages(path.resolve('.'), { platforms: [process.platform] });
+    console.log(`${icons.success} Installing platform specific dependencies completed`);
+  } catch (error) {
+    console.error(`${icons.error} Installing platform specific dependencies failed`);
+    throw error;
+  }
 }
 
 async function setup() {

@@ -37,8 +37,8 @@ This is an Electron app targeting macOS, Windows, and Linux. All code touching t
 
 ## Platform-Specific Dependencies
 
-- `forceInstallPlatformDeps()` in `scripts/setup.js` installs platform-specific native modules (e.g., `@lydell/node-pty-{platform}-{arch}`).
-- Electron builder config handles platform-specific packaging (`mac`/`win`/`linux` targets).
+- `forceInstallPlatformDeps()` in `scripts/setup.js` installs the host OS `@lydell/node-pty-{platform}-{arch}` binaries for local dev. Cross-compiled targets are installed in `electron-builder-config.js` `beforeBuild` for that target platform only (a Linux AppImage must not require Windows `pty.node`).
+- `electron-builder-config.js` copies those optional packages into the app (`files`) and unpacks `*.node` from asar (`asarUnpack`). Do not rely on electron-builder's dependency walker for them.
 
 ## Path Separators in Collection/Workspace Stores
 
