@@ -15,7 +15,7 @@ Local / unsigned builds are not notarized. On the machine that built the DMG eve
 Clear quarantine on the DMG, then open it:
 
 ```bash
-xattr -cr ~/Downloads/bruno_2.0.1_arm64_mac.dmg
+xattr -cr ~/Downloads/bruno_2.0.2_arm64_mac.dmg
 ```
 
 If the app still fails after install:
